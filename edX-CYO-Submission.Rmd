@@ -1,0 +1,353 @@
+---
+title: "Predicting Medical Appointment Non-Attendance"
+author: "Ian Darbey"
+date: "8/20/2020"
+output: pdf_document
+bibliography: ADM.bib
+csl: harvard-cite-them-right.csl
+geometry: margin=0.7in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+load("eda.Rdata")
+load("rfplots.Rdata")
+load("modelsforplots.RData")
+load("ensemble.Rdata")
+load("results.Rdata")
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(C50)) install.packages("C50", repos = "http://cran.us.r-project.org")
+if(!require(naivebayes)) install.packages("naivebayes", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(C50)
+library(naivebayes)
+
+```
+
+# Introduction
+
+## Motivation
+
+Throughout the world health providers deal with many challenges. One of these challenges is the provision of outpatient appointments for patients needing specialist input and review. This issue is quite prevalent in Ireland and is reported quite regularly by Irish media outlets [@RN45].  
+  
+A contributing factor in waiting list length is each healthcare organisations capacity for outpatient appointments. This can vary from speciality to speciality depending on complexity and resources available within each organisation. Failed attendance of scheduled appointments is an important consideration and the Health Service Executive list this as a total over 487k appointments not attended in 2015 [@RN36]. This figure is more than half the number of new referrals (approx. 909k) and accounts for just under 13% of total OPD service provision in 2015.  
+  
+As the above makes clear reducing the rate of non-attendance has the potential to deliver greater value for money, increases in service provision and to have positive overall impact in the lengths of waiting lists. As such understanding the influencing factors for a non-attendance is an important step in beginning to understand and taking appropriate steps, potentially based on patient age or specific condition profiles, to address and attempt to reduce the number of non-attendances.
+
+## Research Question
+Is non-attendance of patient appointments predictable and if so, what can be learned from the contributing factors?
+
+## Potential Beneficiaries
+
+The potential beneficiaries, in my opinion, fall in to two distinct categories; service users and service providers. A service user in this context is a patient who is likely to benefit from attending medical appointments in terms of disease management and overall health. An improved attendance rate is likely to mean the patient has a better quality of life and that any chronic illness they may suffer from is managed by the appropriate clinician/s and treatment plan/s are well coordinated and delivered.  
+  
+A service provider in this context is a public or private hospital providing outpatient appointment services. Appointments which are not attended are essentially lost capacity within their service provision and minimising rates of non-attendance is an important activity. This is particularly important in the public health arena where funding is often based on activity and the cost for providing the services remains largely unchanged whether for example all 50 patients booked for a clinic session attend or if 40 attend and there are 10 failed attendances. The primary cost in providing the services being clinical and administrative time and associated salaries mean that failed attendances negatively impact both capacity and cost effectiveness of service provision, where cost per appointment fulfilled is considered a key metric.  
+
+# Related Work
+There is a variety of research literature on the topic of non-attendance of scheduled appointments with a variety of approaches which lead to varying levels of insight and reliability.  
+  
+One example predicted approximately 60-65% of actual appointment no shows [@RN37] using a combination of patient demographics and history from electronic medical records as well as details about the appointment itself. The author provides no code or detailed specifics about the methodology other than it is an automated Bayesian predictive model (BN). The author appears to take a good approach to segmenting the data for separate training and testing phases of the BN. Of note in relation to this project is that the test subsets of the data were built specifically with the overall ratio non-attendance in mind (1:6 in the authors data, approx. 3:10 in the proposed dataset). This meant the author had two sets of data for each BN run, one with a 50/50 split of shows and no-shows records as the training data and the other with the proportionate split mentioned above. The BN then predicted a probability score from 0-100 with numbers closer to 100 meaning a patient is more likely to show. Based on this table 3 in the document shows the threshold applied to this score, the patients below this score and the number which are of actual no-shows from this. Overall while it’s disappointing to see “software” generically reference and no mention of specific toolset used this paper does at least provide some good guidance on an approach which may be useful within this project.  
+  
+Data mining in and of itself outside of potential benefits of the predictive models is for the analysis and understanding that can be taken from previously unseen data patterns. This is shown quite well in an analysis of appointment scheduling [@RN38]. While this project was focused on administrative tasks by clinicians (repeat prescriptions etc.) it provides some good insights into the underlying data patterns because of the data mining effort. For example, it highlighted a significant reduction in the number of administrative visits during the summer months which was attributed to high temperatures facilitating recovery of some rheumatic illnesses as well as improving some allergic and respiratory illnesses. Generalised Linear Models (GLM) and Support Vector Machines (with Linear and Gaussian kernel) models were used and the results compared. For the issuing of prescriptions, the SVM with linear kernel was the most efficient and the GLM was most efficient for the prediction of the number of requests for sick leave certificates. At this point it is hard to know if either of these will be effective for this project given the different nature of the dataset, but the visualisation and knowledge discovery elements of the paper certainly provide some framework for how similar exploration of the chosen dataset could yield some meaningful insights.  
+  
+Appointment Breaking: Causes and Solutions [@RN39] sought to review numerous other studies and provide a compilation of the results. It helps to highlight the variability from study to study around patient demographics (Age, Sex, Marital Status, Race and Social class), behaviour and attitudes (Previous Appointment keeping, Health beliefs and attitudes and psychosocial problems such as alcohol and drug abuse), situational characteristics (seriousness of problem, referral source, day & time of appointment) as well as business and communication factors (days to appointment and appointment reminders). While the paper provides some interesting insights it’s unfortunate that the dataset doesn’t have the requisite data points to compare to its findings. Given the timeframe since the paper (and the papers it reviews) it would be interesting to compare the significance of the contributing factors. Appointment reminders and previous appointment keeping can be contrasted within the dataset and it will be interesting to see if the passing of time has altered the significance of their influence given more modern approaches available now.  
+  
+In contrast some modern papers suffer similar issues around providing insight and context. The sample size of 91 patients used in the American Journal of Obstetrics & Gynaecology [@RN40] provides little scope for meaningful insights. The authors further subdivide this already small sample into two groups who do or don’t receive a phone call reminder. Within these groups they then subdivide further in areas such as ethnicity and marital status. The Chi Squared tests produce no statistically significant findings apart from when the phone call reminder is disregarded, and the appointments are grouped based on time of year (December to February and March to November, i.e. winter vs non-winter) which shows the winter appointments have higher no-show rates. However, given the size of the overall sample (n=91) and the number of appointments booked in winter (n = 15) it would be extremely difficult to infer anything with any significant confidence about the population. The paper provides a reference point for the care to be taken when attempting to gain insight with ensuring sample size is sufficiently large to provide meaningful and reliable insight a key factor to consider.  
+  
+Factors associated with non-attendance at a hand surgery appointment [@RN41] provides some insights into some influencing factors with chi-square tests, ANOVA and multinomial logistic regression used to understand the strength of influence. It found patients who did not attend and did not call in advance were likely to be younger and were also more likely to be men, Hispanic or black, single or divorced, to have appointments scheduled at the beginning of the week and live relatively close to the hospital. All of which were statistically significant (all with p<0.001). Season of the year was shown to not be statistically significant, but it would be interesting if this had been winter vs rest of the year like similar previous studies as opposed to all 4 seasons. The authors highlight limits surrounding capture of insights into the patients’ behavioural factors within the dataset and highlight they warrant further investigation in future research.  
+  
+Measuring the effectiveness of patient-chosen reminder methods in a private orthodontic practice [@RN42] presents a novel approach to assessing no-shows by comparing various appointment reminder methods which have been decided by the patient, namely; phone, email or SMS. Given the selected dataset contains information regarding whether a patient received an SMS reminder it’s noteworthy that while significantly more patients opted for e-mail reminders the no-show rate was lowest among SMS recipients although the difference was not deemed to be statistically significant.  
+  
+Predictive Analytics for Outpatient Appointments [@RN43] analyses patient demographics and SMS reminders to ascertain influences on probability of no shows. The data was however divided from September to December 2011 for training and testing and January to February 2012 for validation. Given seasonality concerns I’m surprised a less simplistic division was not used to avoid the influence of the month / season on underlying trends. The logistic regression model outperformed the decision tree model and was chosen. A lack of response to the SMS reminder was determined to have a correlation to a very high probability of appointment no-show which is an interesting insight.  
+  
+Time and money: Effects of no-shows at a family practice residency clinic [@RN44] is somewhat limited in scope in that it’s 20 business days or appointments in a small practice but it serves to highlight the business cost implications which larger providers (acute hospitals which have increased overhead costs) should consider. The annualised value between $80k-$350k in lost revenue is tough to ignore and is likely tiny in comparison to acute hospitals providing large scale outpatient services which are more likely to experience significant no-show rates.  
+  
+The above more business focused research is contrasted with [@Devasahay2017] which initially conducted significance testing on the variables in focus and then proceeded to progress to transformation and model building. Of note, approximately 75% of the patients choose to receive appointment updates and reminders via SMS message with 24% choosing letters, the authors noted that if the hospital failed to capture a preferred contact method, the remaining 1%, there was an increase in the chance of the patient not attending the scheduled appointment. The authors noted no significant variance between months, days of the week or clinic session, 1/3 of day, however, the noted specifically that appointments between 8 and 9am and from 12 to 2 pm had a smaller chance of appointments being missed.  Additionally, the authors added to the original dataset with a distance variable which represented the radial distance, in bands of 2km, of the patient from the hospital and noted patients which fell in to the “unknown” distance category, primarily foreign patients, had a higher proportion of missed appointments, 26% vs 18.59% overall. Also of note was that inter-specialty referrals within the hospital had 28% missed appointment rate, again considerably higher than the rest of the dataset. The authors apparently failed to yield any meaningful results from a support vector machine model and gave the results of a decision tree and logistic regression model using SAS 9.3. The decision tree with a cutoff of 0.15 was the best performer, however, it produced sensitivity and specificity of under 24% meaning it produced both a lot of false positives and false negatives with the authors highlighting the significant class imbalance as a contributor to the lack of prediction accuracy. The authors also highlighted that the distance variable was quite imprecise and that there were some definite errors within the dataset, e.g. appointments listed for a Sunday when it was known that the outpatients’ services weren’t operating on Sundays. The authors also highlighted that they elected to remove any missing or incorrect data. Such low accuracy results are perhaps concerning to the project aims here if the chosen dataset proves to be of a similar nature.  
+  
+Another approach taken in [@Alaeddini2011] used a heavily probability based approach at both patient and clinic level. Initially building a probability-based cluster of likelihood of no show appointments across clusters of clinics with similar profiles, this was then combined with patient level probabilistic modelling and initially given to a logistic regression model with weighting then updated based on ARIMA modelling of patient attendance patterns to inform a final prediction. This rather complex methodology resulted in rate of 88.04% accuracy, however it does not go in to detail as to what measure this truly is, i.e. overall accuracy or sensitivity. Given the selected dataset does not have the historic patient level information used to inform some of the methods used here it may perhaps be the ensemble stacking and weighting of model concepts which are most informative of the approach to the project.  
+  
+An interesting approach to designing scheduling rules is used in [@Srinivas2018] with several predictive models experimented with in order to predict non-attendance and develop a scheduling methodology informed by the expectation of some non-attendances, with high and low risk of non-attendance patient categories. Logistic regression, artificial neural network, random forest, gradient boosting machine and a stacked ensemble combining all the models except the logistic regression model. The models are compared using the AUC value with the stacked ensemble model achieving 0.846. Following this the stated accuracy, sensitivity and specificity of the stacking model is 83.88%, 70.54% and 88.83% respectively. This is somewhat similar to some of the other work reviewed in that balanced models are inherently difficult to generate given that the datasets involved seem to be generally imbalanced class wise on the target variable, the balance for the dataset used for this paper is unfortunately not mentioned directly. In addition to the patient demographic and appointment specific information, such as lead-time from booking to appointment, present within many of the research papers the authors also extract the driving time using Google maps API between the patient’s and the hospital zip code. This certainly appears to be a more robust approach of this supportive information than that taken in [@Devasahay2017]. Weather data, minimum and maximum temperature along with information about rainfall, was also incorporated into the dataset, the provider of the weather data is not specified. While outside the scope of this project the use of the models to inform procedures and processes around clinic scheduling is an interesting concept and certainly a follow up step to consider if the model accuracy is enough to warrant such an attempt.  
+  
+Association Rule mining is used in [@Glowacka2009] to analyse a dataset and generate a simulation of the impact of the knowledge gained from the rule mining. Costs for a variety of health professionals are included with the intent to minimise down time for each professional. The no show probabilities for each rule are included as an appendix and the authors and included in simulation modelling of the 11 clinics with 5 shown to be more profitable with others failing to prove statistically significant in comparison to the no rules approach. Overall this paper supports some interesting avenues for further research in the area if a simulation of an overbooking or similar change in management practice was indicated or being considered.  
+  
+An overbooking methodology is developed on the basis of data mining in [@Huang2014] with the use of a dataset spanning 10 years, 2 of which were held out for model evaluation. Given the intent to support an over-booking approach the authors express a preference for minimising Type I error, i.e. predicting a no-show and the patient attends. The authors choose a logistic regression model with no further elaboration on why this model was chosen or if other models were considered and excluded for any reason. As such it’s quite difficult to interpret if the approach was the best choice that could be made or if another model might have performed better. The model results were used to inform an overbooking with patients less than 0.74 likelihood of attending having their appointment slot overbooked. The simulation exercise produced shorter waiting times and less overtime payments, but it would have been interesting to see if this process and simulation held up if implemented.  
+  
+Overall the papers provide some good insight to effective methodologies for data mining and predictive modelling in this area while also highlighting some of the limitations about derivable insights. These combined with the business insights from the papers provide a robust framework on which to ascertain the validity of my analysis and guide future research directions.
+
+
+# Project Methodology
+
+I used the Knowledge Discovery and Data Mining (KDD) process for this project as it supports an iterative approach to build the project requirements and outcomes. This ensured I could take the project in stages and work through each stage while ensuring flexibility to revisit a previous stage if necessary due to some new insight or discovery in the later stages of the project which better informed the approach in the earlier stage. The primary stages are selection, pre-processing, transformation, data mining and interpretation / evaluation with each stage being described in detail in the following sections.  
+
+## Selection
+Following initial consideration, I decided on the general research topic of medical appointment no-show predictions. This was influenced by working in the health service management area in my profession and having an interest in whether this would result in something which could be used as a component to an overbooking strategy based on expected non-attendance.  
+  
+With this in mind I began a search for an appropriate dataset online and ultimately decided upon the use of Medical Appointment No Shows (https://www.kaggle.com/joniarroba/noshowappointments/home), version 5 of which is a better structured but smaller dataset with 110k records vs over 300k in previous versions. As such any comparisons for final predictive performance would need to have the version and size of the respective dataset considered. In order to ensure the project was repeatable and reproducible it was elected to download the dataset rather than load it from an online source which could be amended and result in significant changes being required. 
+
+## Pre-Processing
+
+During the initial analysis of the dataset several issues emerged. While the dataset has no missing values, it does have some encoding errors. In particular, there were errors within the Handcap field which meant that instead of a binary 0 or 1 value there were records with a value of 2, 3 or 4 in the dataset. There were also negative values within the Age field which needed to be reviewed. The field name of the predicted field used a hyphen instead of an underscore i.e. it was No-Show instead of No_Show, this was likely to present an issue for modelling due to the minus symbol and would need to be corrected in the transformation stage. Ultimately it was considered whether to exclude or recode and include the affected records with the decision ultimately taken to correct the affected records in the transformation stage and include them. Of note at this point in the process was the significant class imbalance within the target prediction variable with the dataset heavily imbalanced towards patients who do show up as per Figure 1. This will need to be considered during data mining.  
+  
+Additionally, given the lack of knowledge of the geographical are in question I had to consider whether the neighbourhood was a valuable field to include given it contained an extensive number of variables. With no knowledge of the socio-economic background in which to frame any insight it was elected to exclude the field from model build. A plot of no-shows by neighbourhood was also completed and given the differences in the number of appointments it would be difficult to infer any influence without specific knowledge of the region.
+
+## Transformation
+
+Given the issues identified during the Pre-Processing stage a number of specific tasks were performed to address the initial issues within the dataset and then attempt to infer any further information I could from the existing fields.
+
+### Handcap Field
+
+The Handcap field was mutated with an ifelse function initially to identify records which were equal to 0. If they did equal 0, they remained as 0 and if not, they were set to a value of 1. This ensured that the values intended, i.e. 2, 3, 4, were changed to 1 and the variable was as intended.
+
+### Age Field
+
+Due to the negative values in the age field it was decided to correct the values and use the absolute value as the intended value, this was based on the logical assumption that the minus figures within the dataset were simply input errors. Additionally, following the initial stages of the model building the ages were binned based on 10 groupings to assess if they could improve model build and / or accuracy.
+
+### No Show Field
+
+The field was title with a minus or hyphen symbol which was likely to cause issue during data analysis and model building, so it was retitled with an underscore and changed to be a logical vector i.e. binary 0 or 1.
+
+### Previous No Show Field
+
+This was the most challenging aspect of the transformation stage. This was initially based on a discussion within the group about whether someone who failed to attend an appointment in the past was more or less likely to attend in the future. As such, it was decided to attempt to infer a previous no show field. This was initially done by retrieving the distinct patients, based on the PatientID field, within the dataset. Following this the earliest appointment date, based on the minimum date value for that patient, was captured. These were then combined together using a join to give the earliest date for each patient, this was then subsequently joined back to the main data frame and tidied to result in a new column titled “Previous_No_Show”. While this was a somewhat complicated inference to make it will hopefully add accuracy when I begin to build the predictive models in the later portion of data mining. Additionally, it may also prove useful to inform of future research directions of similar work.
+
+### Leadtime Field
+
+This was created by using a difftime function, with nested coercion of the AppointmentDay to day as opposed to time of day level, with units set to days to establish the difference between when an appointment is scheduled and when the appointment takes place e.g. if an appointment is booked 5 or 6 days in advance. It would be expected that this would potentially be an important contributor to whether a patient attends an appointment or not.
+
+### Finalise for Analysis and Modelling
+
+The final step before proceeding to the Data Mining phase of the project was to coerce the dependent and independent variables to factors where appropriate. Note: this phase was retrospectively influenced by model choices within the data mining phase to be compatible with the selected models. 
+
+
+## Data Mining
+
+The data mining phase was split in to two primary functions with exploratory data analysis performed to 
+visualise and develop an understanding of the underlying variability within the dataset and ensure that any further choices in relation to predictive model choice, training set split methodology etc. were informed by this stage. Following this the predictive models were chosen and built.
+
+### Exploratory Data Analysis
+
+As illustrated in figure 1 there is a significant class imbalance in the prediction variable and at this point it was necessary to understand the independent variables.
+
+```{r No-Shows Overall, fig.cap= "No-Shows Overall",echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = No_Show, fill = No_Show) )+
+  geom_bar()
+```
+
+#### Age
+
+The age profile of the dataset can be easily understood with the use of a density plot, figure 2. It shows a significant tailing off of the dataset in the later age profiles which would tie in to somewhat natural assumptions about life expectancy etc. However, the histogram of the age, Figure 3 shows how a significant portion of the overall dataset, approx. 110k patients, is under 30 years of age.
+
+```{r Age Density Plot, fig.cap="Age Density Plot", echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = Age))+
+  geom_density()
+```
+
+```{r fig3, fig.cap="Age binned histogram", echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = Age))+
+  geom_histogram(bins = 30)
+```
+
+#### Gender
+
+The gender balance, as shown in figure 4, of the dataset is skewed significantly towards female patients, with less than 40k of the approx. 110k patients identified as male.
+
+```{r fig4, fig.cap="Overall Gender Split", echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = Gender, fill = Gender) )+
+  geom_bar()
+```
+
+#### Leadtime
+
+On investigation of the density plot in figure 5 further it is evident, based on figure 6 that within the dataset over half of the appointment are scheduled to take place within 5 days of scheduling. This has some important implications in terms of the generalization potential of any predictive models which will be discussed further in the conclusion.
+
+```{r fig5, fig.cap="Lead-time density plot", echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = leadtime))+
+  geom_density()
+```
+  
+  
+```{r fig6, fig.cap="No-shows by Lead-time <5",echo=FALSE, out.width='80%'}
+ggplot(kaggle_ml, aes(x = leadtime < 5, fill = leadtime < 5))+
+  geom_bar()
+```
+
+#### Alcoholism
+
+The number of patients identified as alcoholics within the dataset is extremely low as a percentage of the overall, less than 3%, and as such it is representative of a significant imbalance and given it appears this patient cohort is more likely to show up, based on figure 7, it may prove to not be influential in model predictive power. 
+
+```{r fig7, fig.cap="Alcoholism No-Shows", echo=FALSE, out.width='80%'}
+kaggle_ml %>%
+  filter(Alcoholism == TRUE) %>%
+  ggplot(aes(x = No_Show, fill = No_Show))+
+  geom_bar()
+```
+
+#### Scholarship
+
+The scholarship is intended to record whether a patient is a recipient of social welfare payments. Similar to alcoholism it is a minority of patients and they appear more likely to attend an appointment as shown in Figure 8.
+
+```{r fig8, fig.cap="Scholarship recipient No-Shows",echo=FALSE, out.width='80%'}
+kaggle_ml %>%
+  filter(Scholarship == TRUE) %>%
+  ggplot(aes(x = No_Show, fill = No_Show))+
+  geom_bar()
+```
+
+#### Hipertension and Diabetes
+
+These two fields identify patients which suffer from either of these chronic issues and between them combine to encapsulate a significant portion of the dataset, over 20k records. Again, the pattern of attendance overall is similar the dataset as a whole as seen in figure 9.
+
+```{r fig9, fig.cap="Hipertension Or Diabetes No-Shows", echo=FALSE, out.width='80%'}
+kaggle_ml %>%
+  filter(Hipertension == TRUE | Diabetes == TRUE) %>%
+  ggplot(aes(x = No_Show, fill = No_Show))+
+  geom_bar()
+```
+
+#### SMS Received
+This field identifies whether a patient received a reminder notification about their appointment via SMS. This is a notable variance from the other fields previously discussed as figure 10 illustrates that patients within the dataset are less likely to attend an appointment if they receive a reminder than if they are suffering from a chronic illness or suffering from alcoholism, based on a proportional comparison of the cohorts in question. This is a somewhat surprising inference to make and may inform future research directions given the prevalence of such SMS reminder systems in use within the Irish healthcare system.
+
+```{r fig10, fig.cap="SMS Reminder No-Shows", echo=FALSE, out.width='80%'}
+kaggle_ml %>%
+  filter(SMS_received == TRUE) %>%
+  ggplot(aes(x = No_Show, fill = No_Show))+
+  geom_bar()
+```
+
+#### Previous No Show
+This field is one I developed based on inference within the dataset to uncover if a patient who does not attend an appointment is more or less likely to not attend for another scheduled appointment. This cohort of patients are similar in profile to the SMS reminders group in that they appear less likely to attend than some of the other cohorts identified within the dataset. 
+
+### Summary Statistics / Information
+Overall the dataset represents one with some challenging class balance issues in its predictive variable along with some significant imbalance in the independent variables.
+
+* Dataset totals 110,527 records
+
+* 62,299 distinct patients
+
+* Average age is `r round(mean(kaggle_ml$Age))` years old
+
+* `r round(mean(kaggle_ml$Alcoholism == TRUE),2)*100`% classified as suffering from alcoholism
+
+* `r round(mean(kaggle_ml$Scholarship == TRUE),3)*100`% classified as being a social welfare recipient
+
+* `r round(mean(kaggle_ml$Diabetes == TRUE),3)*100`% of appointments for diabetic patients
+
+* `r round(mean(kaggle_ml$Hipertension == TRUE),3)*100`% of appointments are for patients identified with hypertension (high blood pressure)
+
+* `r round(mean(kaggle_ml$SMS_received == TRUE),3)*100`% of the scheduled appointments were accompanied by an SMS reminder
+
+* `r round(mean(kaggle_ml$Previous_No_Show == TRUE),3)*100`% of the appointments are for patients identified as having previously failed to attend.
+
+* Median lead-time for appointments is just `r median(kaggle_ml$leadtime)` days (mean is `r round(mean(kaggle_ml$leadtime))` days).
+
+* `r round(mean(kaggle_ml$Gender == "F"),3)*100`% of the appointments are for women
+
+* `r round(mean(kaggle_ml$No_Show == TRUE),3)*100`% of appointments are no-shows
+
+### Predictive Model Builds
+
+Given the significant class imbalance within the dataset a robust strategy for model training and testing was required. Consideration was given to a number of methods, some of which would have retained the proportion of class imbalance within the dataset however, I decided to train, and test based on a balanced subset of the data. Of note, the random seed in R was set to 123 for the below processes.  
+  
+To do this I first extracted all 22,319 appointments which were classified as no shows. I then randomly sampled, without replacement, the rest of the dataset for the same amount of appointments for which the patient did attend. This gave a balanced dataset of 44,638 appointments. Once I had the balanced dataset, I proceeded to split the dataset 70/30 into a training and test set. Prior to specific model builds a random forest, using 100 trees, was built to assess variable importance and compare the use of the Age against a binned age variable with 10 bins, BinnedAge. As illustrated in figures 11 and 12 binning the age variable reduces the effect of the age variable on the predictability of the target no show variable.  
+  
+```{r fig11, fig.cap="Random Forest Variable Importance Age Binned", echo=FALSE, out.width='90%'}
+randomForest::varImpPlot(testrfbinned)
+```
+
+```{r fig12, fig.cap="Random Forest Variable Importance Age Un-binned", echo=FALSE, out.width='90%'}
+randomForest::varImpPlot(testrf)
+```
+
+
+#### Decision Tree
+
+The first model selected to build was a C5.0 decision tree from the C50 R package [@c50]. A number a trees were built and compared with the non-age binned tree within figure 13 chosen most generalisable classifier. Performance almost equal with binned age model which may be less generalisable if samples and populations shift considerably between adjacent bins. Performance of a boosted tree for 5 trials suffered a decrease in performance. The confusion matrix for the chosen model shows overall accuracy of `r round(final_results_table[1,5],4)*100`% and a quite high sensitivity of `r round(final_results_table[1,2],4)*100`%. Of note, by following the logic of the tree in figure 13 we can see the node which has the highest probability of a no show.  
+
+```{r fig13, fig.cap="Decision Tree Model", echo=FALSE, out.width='100%', fig.height=16, fig.width=18}
+plot(decisiontreeboost)
+```
+
+
+#### Logistic Regression
+
+Following this a logistic regression model was built from the base R package. Model performance was significantly different from the decision tree models with overall accuracy lower at `r round(final_results_table[2,5],4)*100`%. Of note, while sensitivity was lower than the decision tree model, it was significantly higher for specificity, `r round(final_results_table[2,3],4)*100`%, with true negatives more accurately predicted compared to the decision tree.
+
+#### Random Forest
+
+A random forest model was then experimented with. Due to the nature of the bagging method of random forest with random sampling and random selection of variables several models were built with a varying number of trees. However, there was little difference between models built using 200 and 2,000 trees and overfitting and computation time concerns led to the selection 200 trees for the model which produced overall accuracy of approx. `r round(final_results_table[3,5],4)*100`%, sensitivity of approx. `r round(final_results_table[3,2],4)*100`% and specificity of approx. `r round(final_results_table[3,3],4)*100`% (approximation used due to the nature of random forest and from testing of multiple model builds).
+
+#### Naïve Bayes Model
+
+A naïve bayes model was built using the naivebayes package from R. Given the probabilistic nature of a naïve bayes model plotting the model post build gave some interesting insight, in that patients in their mid-40s and older are less likely to not attend an appointment and patients with lead-times above approx. 20 days were more likely to not attend also. These are illustrated in figures 14 and 15 respectively. The model itself performed similarly overall to the linear model with a reduction in sensitivity when compared to the decision tree with `r round(final_results_table[4,2],4)*100`% but a significant uplift in specificity with `r round(final_results_table[4,3],4)*100`%.  
+  
+The combination of all these results left me with concerns about overall model performance and parameter adjustments were experimented with, as noted in the decision tree and random forest models and the binning of ages was trialled to assess if the spread of the variable was adversely affecting the model builds, which proved not to be the case. As such, I decided to attempt to combine the relative performance of the best performing models.
+
+```{r fig14, fig.cap="Probability Shift with Age", echo=FALSE, out.width='100%'}
+plot(nbmodel, which = "Age")
+```
+
+```{r fig 15, fig.cap="Probability Shift with leadtime", echo=FALSE, out.width='100%'}
+plot(nbmodel, which = "leadtime")
+```
+
+
+#### Ensemble Models – 1 – C50 and RF
+
+At this stage I attempted to combine the C50 decision tree, random forest, naïve bayes and logistic regression models in to a stacked ensemble model. The prediction method for each model was changed to a probability and these probabilities were then combined in to a single data frame used to train a boosted C50 (trials = 20) decision tree and a random forest (trees = 200). The C50 model, figure 14, gave an overall accuracy against the test set of `r round(final_results_table[5,5],4)*100`% with sensitivity at `r round(final_results_table[5,2],4)*100`% and specificity of `r round(final_results_table[5,3],4)*100`%. The random forest model produced an overall accuracy of `r round(final_results_table[6,5],4)*100`% with sensitivity and specificity balanced approximately balanced.
+
+```{r fig16, fig.cap="Ensemble C50 Decision Tree", echo=FALSE, out.width='100%', fig.height=16, fig.width=28}
+plot(ensembletree)
+```
+
+
+#### Ensemble Model - 2
+
+Given I had one model which performed relatively well on sensitivity, the C50 decision tree, and another which performed relatively well on specificity, the naïve bayes model I then stacked just these two models in to a boosted C50 decision tree, boosting above 10 trials yielded no further notable uplift in performance. The results of this model are quite notable, while overall accuracy was just `r round(final_results_table[7,5],4)*100`% the sensitivity was `r round(final_results_table[7,2],4)*100`%, with specificity suffering and dropping to `r round(final_results_table[7,3],4)*100`%. The final tree is in figure 15. 
+
+```{r fig17, fig.cap="Ensemble Model 2 C50 Decision Tree", echo=FALSE, out.width='100%'}
+plot(pairensembletree)
+```
+
+
+#### Artificial Neural Network (ANN)
+
+Using the rattle package [@Williams] an artificial neural network was built. Given the challenges faced by the previous models I elected to build an ANN with 10 hidden layers. Trials with varying hidden layers of 1-20 were tried with no significant change in overall model effectiveness. The model was built relatively quickly however prediction results were quite similar to the C50 decision tree with approx. `r round(final_results_table[8,5],4)*100`% overall accuracy, sensitivity of approx. `r round(final_results_table[8,2],4)*100`% and specificity of `r round(final_results_table[8,3],4)*100`% representing no real comparative benefit against any of the better models.
+
+#### XGBoost Model
+
+An xgboost model was also built with several trial variations. As tree depth and iterations increased the models tended to converge towards a balanced model, somewhat like the specificity and sensitivity of the random forest ensemble model. The model included in the project has a max tree depth of 6 and is set for 10 iterations, with a 0.3 learning rate. This results in an overall accuracy of `r round(final_results_table[9,5],4)*100`% with sensitivity of `r round(final_results_table[9,2],4)*100`% and `r round(final_results_table[9,3],4)*100`% specificity.
+
+#### Support Vector Machine
+
+A support vector machine model using the radial basis kernel for probability. Model build time was considerably longer than the other models. Unfortunately, the additional build time did not result in a significant uplift in performance. Overall accuracy was `r round(final_results_table[10,5],4)*100`% with sensitivity of `r round(final_results_table[10,2],4)*100`% and specificity of `r round(final_results_table[10,3],4)*100`%, similar in overall performance to the Ensemble 1 C50 model.
+
+### Interpretation / Evalutation
+
+```{r table1, echo=FALSE}
+knitr::kable(final_results_table, caption = "Comparison of Model Results")
+```
+
+
+The comparative table of results are included in table 1. Overall performance is quite disappointing with none of the models above 70% overall accuracy. True positive prediction varied considerably among the models with only 4 models being above 80% sensitivity. The naïve bayes models performance on true negatives, specificity, is considerably better than most of the other models. The models built in ensemble model 1 show some better balance between sensitivity and specificity compared to their component models which is a positive if balanced prediction accuracy is of significant concern. However, if false positives were seen as unimportant and true postive sensitivity was the overriding concern the performance of both the initial C50 decision tree and the ensemble model 2  boosted C50 decision tree are the undeniable go to methods for prediction compared to the senstivity of the other models. Of note, the Kappa value for all of the models is relatively low, with it indicating that the models are at best performing about 35% better than randomly guessing. However given the class imbalance in the dataset overall if you ignored the model and predicted every patient would show up you would have an accuracy of just under 80%. The better performing models compare favourably against others who’ve attempted similar on the same dataset [@Bronchal], although further comparisions are difficult due to the wide variety of sampling methods which have been used.  
+  
+The choice of model will depend on business context the predictive model is to be deployed in. With the HSE the cost of a no show appointment is claimed to be €44 in additional administration costs plus the opportunity cost of not seeing another patient [@McNamara2018] as the slot is essentially wasted. If the business purpose was to predict patients likely not to attended in order to develop a targeted reminder or call service then the 5 models performing above 80% would be good candidates.  
+  
+In my opinion, none of the models perform well enough to be supportive of a service delivery model which relied on the model/s to justify overbooking of appointments. The number of false positives is simply too high across all of the models and would encourage booking volumes that vastly exceeded actual service capacity on the expectation of patients not attending.
+
+
+# Conclusions and Future Work
+The results are perhaps a reflection of the inherent difficulty in predicting whether a patient will attend an appointment or not. The significant imbalance of the target variable, approx. 1:4.5, presented a significant initial challenge meaning the dataset was reduced to twice the size of the smaller class totalling approx. 44k records instead of the full 110k dataset with which to build the models and test their predictive power.  
+  
+It would be interesting to attempt the same analysis and data mining processes on a much larger dataset and also on another dataset from elsewhere in the world.  
+  
+With approximately 1,000 no-shows per month I would hope to perform further research on this topic on behalf of Beaumont Hospital in the near future. Given the social and financial implications, i.e. waiting lists and the cost burden of no-show appointments, it is undoutably an area for review. If the approx. 1,000 no-show appointments could be correctly identified over 90% of the time, false postivies not withstanding then it would provide the information and context to encourage the development of strategies to address this issue. If indeed the touted HSE figure of €44 per no-show was correct then approx. €40,000 could potentially be targeted to either save, or redistribute appointments with patients who are available to attend in place of those that won’t and potentially make better use of existing capacity within the outpatient services provision.  
+  
+At the very least it could inform a comparison to assess if Irish patients can be more reliably predicted to attend appointments or not and if so can what business or service changes can be made to either improve attendance rate or develop an overbooking policy if false positives are sufficiently controllable so as not to be overoptimistic and have more patients attend than can be seen.
+The results may be similar irrespective of geographical and cultural influences but given the structured approach I have taken to assess this dataset it gives a repeatable methodology to follow in the mining of a similar dataset.  
+  
+Given the variety of models and approaches I have tested it’s disappointing that a better model, in terms of overall accuracy did not emerge. Even with the building of 3 manual stacked ensemble methods there was only really a plausible cause for the Model 2 decision tree given it’s uplift in sensitivity over the original C50 decision tree. The artifical neural networks performance is almost on par with the C50 decision tree but given the inherent loss in interpretability with the use of such models it would be difficult to make a case for it’s use unless it had exceed the performance of the C50 decision tree but some significant measure.
+
+
+# References
