@@ -1,3 +1,21 @@
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(smotefamily)) install.packages("smotefamily", repos = "http://cran.us.r-project.org")
+if(!require(C50)) install.packages("C50", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
+if(!require(RColorBrewer)) install.packages("RColorBrewer", repos = "http://cran.us.r-project.org")
+if(!require(ROSE)) install.packages("ROSE", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(xgboost)) install.packages("xgboost", repos = "http://cran.us.r-project.org")
+if(!require(e1071)) install.packages("e1071", repos = "http://cran.us.r-project.org")
+if(!require(naivebayes)) install.packages("naivebayes", repos = "http://cran.us.r-project.org")
+if(!require(rattle)) install.packages("rattle", repos = "http://cran.us.r-project.org")
+if(!require(AUC)) install.packages("AUC", repos = "http://cran.us.r-project.org")
+if(!require(ROCR)) install.packages("ROCR", repos = "http://cran.us.r-project.org")
+if(!require(OneR)) install.packages("OneR", repos = "http://cran.us.r-project.org")
+
 library(tidyverse)
 library(lubridate)
 library(smotefamily)
@@ -94,7 +112,7 @@ kaggle_ml$BinnedAge <- bin(kaggle_ml$Age, nbins = 10)
 levels(kaggle_ml$BinnedAge)
 levels(kaggle_ml$BinnedAge) = c("0to11.5","11.5to23","23to34.5","34.5to46","46to57.5","57.5to69","69to80.5","80.5to92","92to104","104to115")
 
-
+save(kaggle_ml, file = "eda.Rdata")
 #exploration
 ggplot(kaggle_ml, aes(x = No_Show, fill = No_Show) )+
   geom_bar()
@@ -145,7 +163,14 @@ mean(kaggle_ml$Gender == "F")
 mean(kaggle_ml$No_Show == TRUE)
 #build initial model to assess important independent variables
 testrf <- randomForest(No_Show ~ Gender + Age + Scholarship + Hipertension + Diabetes + Alcoholism + SMS_received + Previous_No_Show + leadtime, data = kaggle_ml, type = "class",importance = TRUE, ntree = 100)
-varImpPlot(testrf)
+unbinned <- varImpPlot(testrf)
+
+testrfbinned <- randomForest(No_Show ~ Gender + BinnedAge + Scholarship + Hipertension + Diabetes + Alcoholism + SMS_received + Previous_No_Show + leadtime, data = kaggle_ml, type = "class",importance = TRUE, ntree = 100)
+binned <- varImpPlot(testrfbinned)
+
+save(testrf, testrfbinned, file = "rfplots.Rdata")
+
+var
 
 #Training Set Creation
 set.seed(123)
@@ -180,12 +205,11 @@ randforestmodel2 <- randomForest(No_Show~ Gender + BinnedAge + Scholarship + Hip
 
 nbmodel <- naive_bayes(No_Show~ Gender + Age + Scholarship + Hipertension + Diabetes + Alcoholism + SMS_received + Previous_No_Show + leadtime, data = TrainingSet)
 nbmodel2 <- naive_bayes(No_Show~ Gender + BinnedAge + Scholarship + Hipertension + Diabetes + Alcoholism + SMS_received + Previous_No_Show + leadtime, data = TrainingSet)
-plot(nbmodel)
 
 rparttree <- rpart(No_Show~ Gender + Age + Scholarship + Hipertension + Diabetes + Alcoholism + SMS_received + Previous_No_Show + leadtime, data = TrainingSet, minsplit = 2, minbucket = 1, cp=-1)
 #plot(rparttree)
 #text(rparttree)
-
+save(decisiontreeboost, nbmodel, TrainingSet, file = "modelsforplots.RData")
 
 #Generate Predictions
 C50Predictions <- predict(decisiontree, newdata = TestSet, type = "class")
@@ -288,7 +312,7 @@ perf1 <- performance(pred1,"tpr","fpr")
 plot(perf1)
 
 
-
+save(ensembletree, pairensembletree,buildresults,pairbuildresults, file= "ensemble.Rdata")
 
 
 #Neural Net
@@ -315,7 +339,8 @@ crs$ident     <- NULL
 crs$ignore    <- c("Neighbourhood", "rownum", "BinnedAge")
 crs$weights   <- NULL
 
-library(nnet, quietly=TRUE)
+if(!require(nnet)) install.packages("nnet", repos = "http://cran.us.r-project.org")
+library(nnet)
 crs$nnet <- nnet(as.factor(No_Show) ~ .,
                  data=TrainingSet[,c(crs$input, crs$target)],
                  size=10, skip=TRUE, MaxNWts=10000, trace=FALSE, maxit=100)
@@ -343,7 +368,9 @@ confusionMatrix(as.factor(crs$xgpr), TestSet$No_Show, positive = "TRUE")
 
 
 #SVM - this takes a long time to build ( ~ 6 mins )
+if(!require(kernlab)) install.packages("kernlab", repos = "http://cran.us.r-project.org")
 library(kernlab)
+
 crs$ksvm <- ksvm(as.factor(No_Show) ~ .,
                  data=TrainingSet[,c(crs$input, crs$target)],
                  kernel="rbfdot",
@@ -352,3 +379,41 @@ crs$ksvm <- ksvm(as.factor(No_Show) ~ .,
 crs$svmpr <- kernlab::predict(crs$ksvm, newdata=na.omit(TestSet[, c(crs$input, crs$target)]))
 
 confusionMatrix(as.factor(crs$svmpr), TestSet$No_Show, positive = "TRUE")
+
+
+
+# Save Confusion Matrix Results to a table for the report
+rfcm <- confusionMatrix(rfpreds2, TestSet$No_Show, positive = "TRUE")
+c50dt <-confusionMatrix(C50Predictionsboost, TestSet$No_Show, positive = "TRUE")
+lmcm <- confusionMatrix(lmpreds, TestSet$No_Show, positive = "TRUE")
+nbcm <- confusionMatrix(nbpreds2, TestSet$No_Show, positive = "TRUE")
+EnsembleC50cm <- confusionMatrix(ensembletreeresults, TestSet$No_Show, positive = "TRUE")
+ensemblerfcm <- confusionMatrix(ensembleforestresults, TestSet$No_Show, positive = "TRUE")
+ensemble2C50cm <- confusionMatrix(pairensembletreeresults, TestSet$No_Show, positive = "TRUE")
+artneuralnetcm <- confusionMatrix(as.factor(crs$nnetpr), TestSet$No_Show, positive = "TRUE")
+xgboostcm <- confusionMatrix(as.factor(crs$xgpr), TestSet$No_Show, positive = "TRUE")
+svmcm <- confusionMatrix(as.factor(crs$svmpr), TestSet$No_Show, positive = "TRUE")
+
+confmatrices <- list(rfcm, c50dt, lmcm, nbcm, EnsembleC50cm, ensemblerfcm, ensemble2C50cm,
+                     artneuralnetcm, xgboostcm, svmcm)
+
+row_names <- c("C50 Decison Tree", "Logistic Regression", "Random Forest", "Naive Bayes",
+                "Ensemble Model 1 - C50", "Ensemble Model 1 - Random Forest",
+                "Ensemble Model 2 - C50 boosted", "Artifical Neural Network",
+                "XGBoost Model", "Support Vector Machine")
+
+as.matrix(rfcm, what = "classes")[1]
+
+tmp <- lapply(confmatrices,function(x) {
+  Sensitivity <- as.matrix(x, what = "classes")[1]
+  Specificity <- as.matrix(x, what = "classes")[2]
+  Kappa <- as.matrix(x, what = "overall")[2]
+  Balanced_Accuracy <- as.matrix(x, what = "classes")[11]
+  Results <- cbind.data.frame(Sensitivity, Specificity, Kappa, Balanced_Accuracy)
+}
+)
+names(tmp) <- row_names
+
+final_results_table <- bind_rows(tmp, .id = "Model")
+
+save(final_results_table, file = "results.RData")
